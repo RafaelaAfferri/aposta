@@ -3,11 +3,11 @@ package br.insper.aposta.aposta;
 import br.insper.aposta.partida.PartidaNaoEncontradaException;
 import br.insper.aposta.partida.PartidaNaoRealizadaException;
 import br.insper.aposta.partida.PartidaService;
-import br.insper.aposta.partida.RetornarPartidaDTO;
+import br.insper.loja.partida.dto.RetornarPartidaDTO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,6 +29,9 @@ public class ApostaService {
         ResponseEntity<RetornarPartidaDTO> partida = partidaService.getPartida(aposta.getIdPartida());
 
         if (partida.getStatusCode().is2xxSuccessful())  {
+            if(!partida.getBody().getStatus().equals("AGENDADA")) {
+                throw new PartidaNaoRealizadaException("Partida não realizada");
+            }
             aposta.setStatus("REALIZADA");
             aposta.setDataAposta(LocalDateTime.now());
 
@@ -43,24 +46,15 @@ public class ApostaService {
         return apostaRepository.findAll();
     }
 
-    public Aposta getAposta(String idAposta) {
 
-        Optional<Aposta> op = apostaRepository.findById(idAposta);
+    @KafkaListener(topics = "partidas")
+    public void atualizarApostas(RetornarPartidaDTO partidaDTO) {
 
-        if (!op.isPresent()) {
-            throw new ApostaNaoEncontradaException("Aposta não encontrada");
-        }
+        List<Aposta> apostas= apostaRepository.findByIdPartida(partidaDTO.getId());
 
-        Aposta aposta = op.get();
 
-        if (!aposta.getStatus().equals("REALIZADA")) {
-            return aposta;
-        }
+        for(Aposta aposta : apostas) {
 
-        ResponseEntity<RetornarPartidaDTO> partida = partidaService.getPartida(aposta.getIdPartida());
-
-        if (partida.getStatusCode().is2xxSuccessful())  {
-            RetornarPartidaDTO partidaDTO = partida.getBody();
 
             if (partidaDTO.getStatus().equals("REALIZADA")) {
 
@@ -82,11 +76,16 @@ public class ApostaService {
             } else {
                 throw new PartidaNaoRealizadaException("Partida não realizada");
             }
-            return apostaRepository.save(aposta);
-
-        } else {
-            throw new PartidaNaoEncontradaException("Partida não encontrada");
+            apostaRepository.save(aposta);
         }
+    }
 
+    public Aposta getAposta(String idAposta) {
+        Optional<Aposta> op = apostaRepository.findById(idAposta);
+        if (op.isEmpty()) {
+            throw new ApostaNaoEncontradaException("Aposta não encontrada");
+        }
+        Aposta aposta = op.get();
+        return aposta;
     }
 }
